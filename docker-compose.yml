@@ -1,0 +1,11 @@
+services:
+  vision-backend:
+    build: .
+    container_name: vision-backend
+    ports:
+      - "8080:8080"
+    env_file:
+      - .env
+    restart: unless-stopped
+    # If your OCR and Caption APIs run as separate containers on the same host/network,
+    # you can add them here and reference by service name.
