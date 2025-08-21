@@ -10,4 +10,5 @@ beautifulsoup4==4.13.4
 lxml==6.0.0
 lxml_html_clean==0.4.2
 playwright==1.47.0
+markdownify==0.13.1
 
