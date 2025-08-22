@@ -8,6 +8,7 @@ class TranscriptReq(BaseModel):
     languages: List[str] = Field(default=["en"], description="Preferred languages for transcript")
     translate_to: Optional[str] = Field(default=None, description="Language to translate transcript to")
     try_youtube_data_api: bool = Field(default=False, description="Try YouTube Data API as fallback")
+    stt_fallback: bool = Field(default=False, description="Use open-source STT fallback (faster-whisper) when captions unavailable")
 
 
 class TranscriptSegment(BaseModel):
@@ -22,7 +23,7 @@ class TranscriptRes(BaseModel):
     language: str
     segments: List[TranscriptSegment]
     total_duration: float
-    source: str = Field(description="Source: 'youtube-transcript-api' or 'youtube-data-api'")
+    source: str = Field(description="Source: 'youtube-transcript-api' | 'stt' | 'youtube-data-api'")
 
 
 class FramesReq(BaseModel):
@@ -33,6 +34,8 @@ class FramesReq(BaseModel):
     max_frames: int = Field(default=100, ge=1, le=500, description="Maximum number of frames to extract")
     return_zip: bool = Field(default=False, description="Return frames as ZIP file")
     content_threshold: Optional[float] = Field(default=27.0, description="Content threshold for scene detection")
+    cookies: Optional[str] = Field(default=None, description="Optional raw Cookie header to pass to YouTube (for age/consent/bot checks)")
+    use_android_client: bool = Field(default=True, description="Use Android client extractor to reduce bot checks")
 
 
 class FrameItem(BaseModel):
