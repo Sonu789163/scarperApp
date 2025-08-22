@@ -15,8 +15,7 @@ from .scraper import scrape_url
 from .models import TranscriptReq, TranscriptRes, TranscriptSegment, FramesReq, FramesRes, FrameItem
 from .yt_utils import (
     extract_video_id, get_transcript_via_lib, get_transcript_via_youtube_data_api,
-    download_video_to_tmp, download_audio_to_tmp, transcribe_audio_via_faster_whisper,
-    duration_seconds, extract_frames_interval,
+    download_video_to_tmp, duration_seconds, extract_frames_interval,
     detect_scenes_and_midpoints, extract_frames_at_timestamps, make_zip
 )
 
@@ -73,57 +72,35 @@ async def scrape(payload: ScrapeRequest) -> ScrapeResponse:
 
 @router.post("/transcript", response_model=TranscriptRes)
 async def get_transcript(payload: TranscriptReq) -> TranscriptRes:
-    start_time = time.time()
     try:
-        video_id = extract_video_id(payload.video_url, payload.video_id)
-        # 1) Try library captions
-        result = get_transcript_via_lib(video_id, payload.languages, payload.translate_to)
-        if result:
-            items, language_code = result
-            segments = []
-            total_duration = 0.0
-            for entry in items:
-                start = float(entry.get('start', 0))
-                duration = float(entry.get('duration', 0))
-                text = entry.get('text', '')
-                segments.append(TranscriptSegment(start=start, duration=duration, text=text))
-                total_duration = max(total_duration, start + duration)
+        vid = extract_video_id(payload.video_url, payload.video_id)
+
+        # First try youtube-transcript-api
+        try:
+            source, segs = get_transcript_via_lib(vid, payload.languages, payload.translate_to)
+            segments = [TranscriptSegment(start=s["start"], duration=s["duration"], text=s["text"]) for s in segs]
             return TranscriptRes(
-                video_id=video_id,
-                language=language_code or 'unknown',
+                video_id=vid, 
+                source=source, 
                 segments=segments,
-                total_duration=total_duration,
-                source='youtube-transcript-api'
+                language=payload.languages[0] if payload.languages else "en",
+                total_duration=max([s.start + s.duration for s in segments]) if segments else 0.0
             )
-        # 2) STT fallback if allowed
-        if payload.stt_fallback:
-            try:
-                audio_path, tmp_dir = download_audio_to_tmp(video_id)
-                items, lang = transcribe_audio_via_faster_whisper(audio_path, language_hint=payload.translate_to or (payload.languages[0] if payload.languages else None))
-                segments = []
-                total_duration = 0.0
-                for entry in items:
-                    start = float(entry.get('start', 0))
-                    duration = float(entry.get('duration', 0))
-                    text = entry.get('text', '')
-                    segments.append(TranscriptSegment(start=start, duration=duration, text=text))
-                    total_duration = max(total_duration, start + duration)
-                return TranscriptRes(
-                    video_id=video_id,
-                    language=lang,
-                    segments=segments,
-                    total_duration=total_duration,
-                    source='stt'
-                )
-            except ImportError as e:
-                raise HTTPException(status_code=400, detail=f"STT fallback not available: {e}")
-            except Exception as e:
-                raise HTTPException(status_code=500, detail=f"STT fallback error: {e}")
-            finally:
-                if 'tmp_dir' in locals() and tmp_dir and os.path.exists(tmp_dir):
-                    shutil.rmtree(tmp_dir)
-        # 3) Otherwise 404
-        raise HTTPException(status_code=404, detail="Transcript not available for this video")
+        except Exception as e:
+            # Optional fallback to YouTube Data API if env + flag are set
+            if payload.try_youtube_data_api and os.getenv("YOUTUBE_API_KEY"):
+                segs = get_transcript_via_youtube_data_api(vid)
+                if segs:
+                    segments = [TranscriptSegment(**s) for s in segs]
+                    return TranscriptRes(
+                        video_id=vid, 
+                        source="youtube_data_api", 
+                        segments=segments,
+                        language=payload.languages[0] if payload.languages else "en",
+                        total_duration=max([s.start + s.duration for s in segments]) if segments else 0.0
+                    )
+
+            raise HTTPException(status_code=404, detail=f"Transcript not available: {str(e)}")
     except HTTPException as e:
         raise e
     except ValueError as e:
@@ -132,50 +109,43 @@ async def get_transcript(payload: TranscriptReq) -> TranscriptRes:
         raise HTTPException(status_code=500, detail=f"Transcript error: {exc}")
 
 
-@router.post("/frames", response_model=FramesRes)
-async def extract_frames(payload: FramesReq) -> FramesRes:
-    start_time = time.time()
-    temp_dir = None
-    video_path = None
+@router.post("/frames")
+async def frames(req: FramesReq):
+    vid = extract_video_id(req.video_url, req.video_id)
+    tmpdir, video_path = None, None
     try:
-        if payload.method == "interval" and payload.interval_seconds <= 0:
-            raise HTTPException(status_code=400, detail="interval_seconds must be > 0")
-        if payload.max_frames > 500:
-            raise HTTPException(status_code=413, detail="max_frames cannot exceed 500")
-        video_id = extract_video_id(payload.video_url, payload.video_id)
-        video_path, temp_dir = download_video_to_tmp(video_id, cookies=payload.cookies, use_android_client=payload.use_android_client)
-        video_duration = duration_seconds(video_path)
-        if video_duration <= 0:
-            raise HTTPException(status_code=500, detail="Could not determine video duration")
-        frames_dir = os.path.join(temp_dir, "frames")
-        os.makedirs(frames_dir, exist_ok=True)
-        if payload.method == "interval":
-            timestamps = extract_frames_interval(video_path, frames_dir, payload.interval_seconds, payload.max_frames)
-        elif payload.method == "scenedetect":
-            scene_midpoints = detect_scenes_and_midpoints(video_path, payload.content_threshold)
-            timestamps = extract_frames_at_timestamps(video_path, frames_dir, scene_midpoints, payload.max_frames)
+        tmpdir, video_path = download_video_to_tmp(vid)
+        frames_dir = os.path.join(tmpdir, "frames")
+        if req.method == "interval":
+            extracted = extract_frames_interval(video_path, frames_dir, req.interval_seconds, req.max_frames)
         else:
-            raise HTTPException(status_code=400, detail="Invalid method")
-        frames = []
-        for i, timestamp in enumerate(timestamps):
-            frames.append(FrameItem(timestamp=timestamp, frame_number=i, file_path=os.path.join(frames_dir, f"frame_{i:04d}.jpg")))
-        extraction_time = time.time() - start_time
-        if payload.return_zip:
-            zip_path = make_zip(frames_dir, f"frames_{video_id}")
-            return FileResponse(zip_path, media_type="application/zip", filename=f"frames_{video_id}.zip")
+            mids = detect_scenes_and_midpoints(video_path, req.content_threshold, req.max_frames)
+            extracted = extract_frames_at_timestamps(video_path, frames_dir, mids)
+
+        items = [FrameItem(timestamp=t, frame_number=i, filename=f) for i, (t, f) in enumerate(extracted, start=1)]
+
+        if req.return_zip:
+            zip_base = os.path.join(tmpdir, f"{vid}_frames")
+            zip_path = make_zip(frames_dir, zip_base)
+            # Stream back the zip; also include JSON listing in header (optional)
+            headers = {}
+            if hasattr(req, 'include_listing') and req.include_listing:
+                headers["X-Frames-Listing"] = os.path.basename(zip_path)  # simple marker
+            return FileResponse(zip_path, media_type="application/zip", filename=os.path.basename(zip_path))
+
+        # Otherwise JSON-only
         return FramesRes(
-            video_id=video_id,
-            total_frames=len(frames),
-            frames=frames,
-            method=payload.method,
-            video_duration=video_duration,
-            extraction_time=extraction_time
+            video_id=vid,
+            method=req.method,
+            frames=items,
+            total_frames=len(items),
+            video_duration=duration_seconds(video_path),
+            extraction_time=0.0  # We'll calculate this if needed
         )
-    except HTTPException as e:
-        raise e
-    except Exception as exc:
-        raise HTTPException(status_code=500, detail=f"Frame extraction error: {exc}")
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
     finally:
-        if temp_dir and os.path.exists(temp_dir):
-            shutil.rmtree(temp_dir)
+        if tmpdir and os.path.exists(tmpdir):
+            shutil.rmtree(tmpdir, ignore_errors=True)
 

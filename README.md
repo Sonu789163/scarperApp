@@ -9,8 +9,8 @@ A FastAPI backend that provides web scraping, OCR/Caption proxying, and YouTube 
 - `POST /proxy/ocr` — multipart form-data with `file` to forward to OCR service; returns `{ text }`
 - `POST /proxy/caption` — multipart form-data with `file` to forward to Caption service; returns `{ caption }`
 - `POST /scrape` — JSON `{ "url": "https://...", "headless": true }`; returns `{ title, text, images, html, markdown }`
-- `POST /transcript` — JSON `{ "video_url": "https://youtube.com/...", "languages": ["en"], "translate_to": null }`; returns transcript segments
-- `POST /frames` — JSON `{ "video_url": "https://youtube.com/...", "method": "interval|scenedetect", "max_frames": 100 }`; returns frame timestamps or ZIP file
+- `POST /transcript` — JSON `{ "video_url": "https://youtube.com/...", "languages": ["en"], "translate_to": null, "try_youtube_data_api": false }`; returns transcript segments
+- `POST /frames` — JSON `{ "video_url": "https://youtube.com/...", "method": "interval|scenedetect", "max_frames": 100, "return_zip": true }`; returns frame timestamps or ZIP file
 
 ### Configuration
 
@@ -68,13 +68,13 @@ docker run --rm -p 8080:8080 --env-file .env scarper-app
 
 - Method: POST
 - URL: `http://<host>:8080/transcript`
-- JSON Body: `{ "video_url": "https://youtube.com/watch?v=VIDEO_ID" }`
+- JSON Body: `{ "video_url": "https://youtube.com/watch?v=VIDEO_ID", "languages": ["en"], "try_youtube_data_api": false }`
 
 #### YouTube Frame Extraction
 
 - Method: POST
 - URL: `http://<host>:8080/frames`
-- JSON Body: `{ "video_url": "https://youtube.com/watch?v=VIDEO_ID", "method": "scenedetect", "max_frames": 50 }`
+- JSON Body: `{ "video_url": "https://youtube.com/watch?v=VIDEO_ID", "method": "scenedetect", "max_frames": 50, "return_zip": true }`
 
 #### OCR/Caption Proxying
 

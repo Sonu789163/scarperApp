@@ -23,7 +23,7 @@ class TranscriptRes(BaseModel):
     language: str
     segments: List[TranscriptSegment]
     total_duration: float
-    source: str = Field(description="Source: 'youtube-transcript-api' | 'stt' | 'youtube-data-api'")
+    source: str = Field(description="Source: 'youtube_transcript_api' | 'youtube_data_api'")
 
 
 class FramesReq(BaseModel):
@@ -32,16 +32,15 @@ class FramesReq(BaseModel):
     method: Literal["interval", "scenedetect"] = Field(description="Frame extraction method")
     interval_seconds: Optional[float] = Field(default=5.0, description="Interval between frames (for interval method)")
     max_frames: int = Field(default=100, ge=1, le=500, description="Maximum number of frames to extract")
-    return_zip: bool = Field(default=False, description="Return frames as ZIP file")
+    return_zip: bool = Field(default=True, description="Return frames as ZIP file")
     content_threshold: Optional[float] = Field(default=27.0, description="Content threshold for scene detection")
-    cookies: Optional[str] = Field(default=None, description="Optional raw Cookie header to pass to YouTube (for age/consent/bot checks)")
-    use_android_client: bool = Field(default=True, description="Use Android client extractor to reduce bot checks")
+    include_listing: bool = Field(default=True, description="Include JSON listing of frames")
 
 
 class FrameItem(BaseModel):
     timestamp: float = Field(description="Frame timestamp in seconds")
     frame_number: int = Field(description="Sequential frame number")
-    file_path: Optional[str] = Field(default=None, description="Local file path (if not zipped)")
+    filename: str = Field(description="Frame filename")
 
 
 class FramesRes(BaseModel):
@@ -52,3 +51,4 @@ class FramesRes(BaseModel):
     method: str
     video_duration: float
     extraction_time: float
+    zip_filename: Optional[str] = Field(default=None, description="ZIP filename if returned as ZIP")
