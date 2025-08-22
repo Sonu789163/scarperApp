@@ -11,4 +11,8 @@ lxml==6.0.0
 lxml_html_clean==0.4.2
 playwright==1.47.0
 markdownify==0.13.1
+yt-dlp==2024.12.13
+youtube-transcript-api==0.6.2
+scenedetect==0.6.2
+opencv-python-headless==4.9.0.80
 
