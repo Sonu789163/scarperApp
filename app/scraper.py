@@ -150,67 +150,48 @@ def clean_and_extract_main_content(html: str, base_url: str) -> tuple[str, str, 
             content_html = str(main_el)
             content_text = main_el.get_text("\n", strip=True)
     
-    # Extract images and their positions
-    images = []
-    image_positions = []
-    
-    # Find all images and their text positions
-    for img in main_el.select("img[src]"):
-        src = img.get("src", "")
-        if src:
-            # Find the text position by looking at surrounding text
-            img_text = img.get_text(" ", strip=True)
-            if img_text:
-                # Try to find the image reference in the text
-                img_index = content_text.find(img_text)
-                if img_index != -1:
-                    image_positions.append((img_index, src))
-    
-    # Sort images by their position in the text
-    image_positions.sort(key=lambda x: x[0])
-    images = [pos[1] for pos in image_positions]
-    
-    # Integrate image links inline with text where "Reference Image:" appears
-    enhanced_text = content_text
-    
-    # Find all occurrences of "Reference Image:" and insert corresponding image links
-    ref_image_marker = "Reference Image:"
-    current_image_index = 0
-    
-    while ref_image_marker in enhanced_text and current_image_index < len(images):
-        marker_pos = enhanced_text.find(ref_image_marker)
-        if marker_pos != -1:
-            # Find the end of the current sentence or line
-            end_pos = enhanced_text.find('\n', marker_pos)
-            if end_pos == -1:
-                end_pos = len(enhanced_text)
-            
-            # Insert image link after "Reference Image:"
-            image_link = f" {images[current_image_index]}"
-            enhanced_text = (
-                enhanced_text[:marker_pos + len(ref_image_marker)] + 
-                image_link + 
-                enhanced_text[marker_pos + len(ref_image_marker):]
-            )
-            
-            # Move to next image
-            current_image_index += 1
-            
-            # Skip this occurrence to find next one
-            enhanced_text = enhanced_text.replace(ref_image_marker, f"REF_IMAGE_MARKER_{current_image_index}", 1)
-    
-    # Restore "Reference Image:" markers
-    for i in range(current_image_index, 0, -1):
-        enhanced_text = enhanced_text.replace(f"REF_IMAGE_MARKER_{i}", "Reference Image:")
-    
-    # If we have more images than "Reference Image:" markers, append them at the end
-    if current_image_index < len(images):
-        remaining_images = images[current_image_index:]
-        enhanced_text += f"\n\nAdditional Images:\n" + "\n".join(remaining_images)
+    images = sorted({img.get("src", "") for img in main_el.select("img[src]") if img.get("src")})
 
     content_md = md(content_html) if md else None
 
-    return article.title or "", enhanced_text, images if images else [], content_html, content_md
+    return article.title or "", content_text, images if images else [], content_html, content_md
+
+
+def enhance_text_with_inline_images(text: str, images: list[str]) -> str:
+    """
+    Enhance text by including image links inline where "Reference Image:" appears.
+    This function will replace "Reference Image:" with "Reference Image: [IMAGE_LINK]"
+    """
+    if not images:
+        return text
+    
+    enhanced_text = text
+    image_index = 0
+    
+    # Find all occurrences of "Reference Image:" and replace with image links
+    while "Reference Image:" in enhanced_text and image_index < len(images):
+        # Find the position of "Reference Image:"
+        ref_pos = enhanced_text.find("Reference Image:")
+        
+        # Find the end of the current sentence or line
+        end_pos = enhanced_text.find("\n", ref_pos)
+        if end_pos == -1:
+            end_pos = len(enhanced_text)
+        
+        # Insert the image link after "Reference Image:"
+        insert_pos = ref_pos + len("Reference Image:")
+        image_link = f" [{images[image_index]}]"
+        
+        enhanced_text = (
+            enhanced_text[:insert_pos] + 
+            image_link + 
+            enhanced_text[insert_pos:]
+        )
+        
+        # Move to next image for next occurrence
+        image_index += 1
+    
+    return enhanced_text
 
 
 async def scrape_url(url: str, headless: bool = True) -> dict:
@@ -220,6 +201,16 @@ async def scrape_url(url: str, headless: bool = True) -> dict:
     if not text and not images:
         raw_html, raw_final_url = await fetch_html_raw(base_url)
         title, text, images, content_html, content_md = clean_and_extract_main_content(raw_html, raw_final_url)
-    return {"title": title, "text": text, "images": images, "html": content_html, "markdown": content_md}
+    
+    # Enhance text with inline image links
+    enhanced_text = enhance_text_with_inline_images(text, images)
+    
+    return {
+        "title": title, 
+        "text": enhanced_text, 
+        "images": images, 
+        "html": content_html, 
+        "markdown": content_md
+    }
 
 

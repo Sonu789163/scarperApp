@@ -12,16 +12,4 @@ lxml_html_clean==0.4.2
 playwright>=1.54.0
 greenlet>=3.2.4
 markdownify==0.13.1
-yt-dlp==2024.12.13
-youtube-transcript-api==0.6.2
-numpy>=2.0.0
-opencv-python-headless>=4.8.0
-scenedetect>=0.6.2
-# Open-source STT fallback (CPU-friendly)
-faster-whisper==1.0.3
-ctranslate2==4.6.0
-sentencepiece==0.2.0
-
-# Additional YouTube processing
-python-dotenv==1.0.1
 
