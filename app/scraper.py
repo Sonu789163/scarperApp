@@ -9,6 +9,7 @@ try:
 except Exception:  # optional
     md = None
 from playwright.async_api import async_playwright
+import httpx
 
 
 async def fetch_html_with_js(url: str, wait_until: str = "networkidle", timeout_ms: int = 30000, headless: bool = True) -> tuple[str, str]:
@@ -38,10 +39,13 @@ async def fetch_html_with_js(url: str, wait_until: str = "networkidle", timeout_
 
         page = await context.new_page()
         await page.goto(url, wait_until=wait_until, timeout=timeout_ms)
+        # Nudge dynamic loading
+        await page.evaluate("window.scrollBy(0, document.body.scrollHeight)")
+        await page.wait_for_timeout(500)
 
         # Wait for common content selectors if available
         selectors = [
-            "#article_TOC", "#articelDetail",
+            "#article_TOC", "#articelDetail", ".ArticleDetail_description", ".KbDetailLtContainer__description",
             "main article", "article", "#content", ".entry-content", ".post-content", ".kb-article", ".kb-article__content",
         ]
         found = False
@@ -61,6 +65,21 @@ async def fetch_html_with_js(url: str, wait_until: str = "networkidle", timeout_
         final_url = page.url
         await browser.close()
         return html, final_url
+
+
+async def fetch_html_raw(url: str, timeout_s: int = 20) -> tuple[str, str]:
+    headers = {
+        "User-Agent": (
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+            "(KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36"
+        ),
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+        "Accept-Language": "en-US,en;q=0.9",
+    }
+    async with httpx.AsyncClient(timeout=timeout_s, headers=headers, follow_redirects=True) as client:
+        resp = await client.get(url)
+        resp.raise_for_status()
+        return resp.text, str(resp.url)
 
 
 def clean_and_extract_main_content(html: str, base_url: str) -> tuple[str, str, list[str], str, str | None]:
@@ -119,17 +138,88 @@ def clean_and_extract_main_content(html: str, base_url: str) -> tuple[str, str, 
     main_el = max(candidates, key=text_len)
     content_html = str(main_el)
     content_text = main_el.get_text("\n", strip=True)
-    images = sorted({img.get("src", "") for img in main_el.select("img[src]") if img.get("src")})
+
+    # Fallback: pick densest text container if extraction is too small
+    if len(content_text) < 80:
+        alt_candidates = soup.select(
+            "main, article, section, div#article_TOC, div#articelDetail, div.description, .ArticleDetail_description, .KbDetailLtContainer__description"
+        )
+        alt_candidates = [el for el in alt_candidates if el is not None]
+        if alt_candidates:
+            main_el = max(alt_candidates, key=text_len)
+            content_html = str(main_el)
+            content_text = main_el.get_text("\n", strip=True)
+    
+    # Extract images and their positions
+    images = []
+    image_positions = []
+    
+    # Find all images and their text positions
+    for img in main_el.select("img[src]"):
+        src = img.get("src", "")
+        if src:
+            # Find the text position by looking at surrounding text
+            img_text = img.get_text(" ", strip=True)
+            if img_text:
+                # Try to find the image reference in the text
+                img_index = content_text.find(img_text)
+                if img_index != -1:
+                    image_positions.append((img_index, src))
+    
+    # Sort images by their position in the text
+    image_positions.sort(key=lambda x: x[0])
+    images = [pos[1] for pos in image_positions]
+    
+    # Integrate image links inline with text where "Reference Image:" appears
+    enhanced_text = content_text
+    
+    # Find all occurrences of "Reference Image:" and insert corresponding image links
+    ref_image_marker = "Reference Image:"
+    current_image_index = 0
+    
+    while ref_image_marker in enhanced_text and current_image_index < len(images):
+        marker_pos = enhanced_text.find(ref_image_marker)
+        if marker_pos != -1:
+            # Find the end of the current sentence or line
+            end_pos = enhanced_text.find('\n', marker_pos)
+            if end_pos == -1:
+                end_pos = len(enhanced_text)
+            
+            # Insert image link after "Reference Image:"
+            image_link = f" {images[current_image_index]}"
+            enhanced_text = (
+                enhanced_text[:marker_pos + len(ref_image_marker)] + 
+                image_link + 
+                enhanced_text[marker_pos + len(ref_image_marker):]
+            )
+            
+            # Move to next image
+            current_image_index += 1
+            
+            # Skip this occurrence to find next one
+            enhanced_text = enhanced_text.replace(ref_image_marker, f"REF_IMAGE_MARKER_{current_image_index}", 1)
+    
+    # Restore "Reference Image:" markers
+    for i in range(current_image_index, 0, -1):
+        enhanced_text = enhanced_text.replace(f"REF_IMAGE_MARKER_{i}", "Reference Image:")
+    
+    # If we have more images than "Reference Image:" markers, append them at the end
+    if current_image_index < len(images):
+        remaining_images = images[current_image_index:]
+        enhanced_text += f"\n\nAdditional Images:\n" + "\n".join(remaining_images)
 
     content_md = md(content_html) if md else None
 
-    return article.title or "", content_text, images if images else [], content_html, content_md
+    return article.title or "", enhanced_text, images if images else [], content_html, content_md
 
 
 async def scrape_url(url: str, headless: bool = True) -> dict:
     base_url = url.split("#", 1)[0]
     html, final_url = await fetch_html_with_js(base_url, headless=headless)
     title, text, images, content_html, content_md = clean_and_extract_main_content(html, final_url)
+    if not text and not images:
+        raw_html, raw_final_url = await fetch_html_raw(base_url)
+        title, text, images, content_html, content_md = clean_and_extract_main_content(raw_html, raw_final_url)
     return {"title": title, "text": text, "images": images, "html": content_html, "markdown": content_md}
 
 
