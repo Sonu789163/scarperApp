@@ -65,6 +65,8 @@ async def scrape(payload: ScrapeRequest) -> ScrapeResponse:
     try:
         result = await scrape_url(payload.url, headless=payload.headless)
         return ScrapeResponse(**result)
+    except HTTPException as e:
+        raise e
     except Exception as exc:
         raise HTTPException(status_code=500, detail=f"Scrape error: {exc}")
 
@@ -79,51 +81,45 @@ async def get_transcript(payload: TranscriptReq) -> TranscriptRes:
         video_id = extract_video_id(payload.video_url, payload.video_id)
         
         # Try youtube-transcript-api first
-        transcript = get_transcript_via_lib(
+        result = get_transcript_via_lib(
             video_id, 
             payload.languages, 
             payload.translate_to
         )
         
-        if transcript:
+        if result:
+            items, language_code = result
             # Convert to our format
             segments = []
-            total_duration = 0
-            
-            for entry in transcript:
-                start = entry.get('start', 0)
-                duration = entry.get('duration', 0)
+            total_duration = 0.0
+            for entry in items:
+                start = float(entry.get('start', 0))
+                duration = float(entry.get('duration', 0))
                 text = entry.get('text', '')
-                
-                segments.append(TranscriptSegment(
-                    start=start,
-                    duration=duration,
-                    text=text
-                ))
-                
+                segments.append(TranscriptSegment(start=start, duration=duration, text=text))
                 total_duration = max(total_duration, start + duration)
             
             return TranscriptRes(
                 video_id=video_id,
-                language=transcript.language_code if hasattr(transcript, 'language_code') else 'en',
+                language=language_code or 'en',
                 segments=segments,
                 total_duration=total_duration,
                 source='youtube-transcript-api'
             )
         
-        # Fallback to YouTube Data API if requested
+        # Fallback to YouTube Data API if requested (stub returns None for now)
         if payload.try_youtube_data_api:
             transcript = get_transcript_via_youtube_data_api(video_id)
             if transcript:
-                # Handle Data API response format
+                # Placeholder until implemented
                 pass
         
         # No transcript available
-        raise HTTPException(
-            status_code=404, 
-            detail="Transcript not available for this video"
-        )
+        raise HTTPException(status_code=404, detail="Transcript not available for this video")
         
+    except HTTPException as e:
+        # Let explicit HTTP errors through (e.g., 404)
+        raise e
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     except Exception as exc:
@@ -204,6 +200,8 @@ async def extract_frames(payload: FramesReq) -> FramesRes:
             extraction_time=extraction_time
         )
         
+    except HTTPException as e:
+        raise e
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     except Exception as exc:
