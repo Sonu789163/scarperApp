@@ -33,38 +33,54 @@ def extract_video_id(video_url: str, video_id: Optional[str] = None) -> str:
     raise ValueError("Invalid YouTube URL or could not extract video ID")
 
 
-def get_transcript_via_lib(video_id: str, languages: List[str] = None, translate_to: str = None) -> Optional[dict]:
-    """Get transcript using youtube-transcript-api with fallbacks."""
-    if languages is None:
-        languages = ["en"]
-    
-    try:
-        # Try to get transcript in preferred languages
-        transcript_list = YouTubeTranscriptApi.list_transcripts(video_id)
-        
-        # First try to get transcript in preferred language
-        for lang in languages:
-            try:
-                transcript = transcript_list.find_transcript([lang])
-                if translate_to and translate_to != lang:
-                    transcript = transcript.translate(translate_to)
-                return transcript
-            except (NoTranscriptFound, TranscriptsDisabled):
-                continue
-        
-        # Fallback to any available transcript
+def get_transcript_via_lib(video_id: str, languages: List[str] = None, translate_to: str = None) -> Optional[Tuple[List[dict], str]]:
+    """Get transcript using youtube-transcript-api.
+    Returns (items, language_code) or None if not available.
+    """
+    languages = languages or ["en"]
+
+    # If translation requested, use Transcript object API to translate then fetch
+    if translate_to:
         try:
-            transcript = transcript_list.find_transcript(transcript_list)
-            if translate_to:
-                transcript = transcript.translate(translate_to)
-            return transcript
-        except (NoTranscriptFound, TranscriptsDisabled):
-            pass
-            
-    except Exception as e:
-        print(f"Error getting transcript via lib: {e}")
-    
-    return None
+            t_list = YouTubeTranscriptApi.list_transcripts(video_id)
+            base_tr = None
+            try:
+                base_tr = t_list.find_transcript(languages)
+            except Exception:
+                # pick first available transcript if preferred langs not found
+                for tr in t_list:
+                    base_tr = tr
+                    break
+            if not base_tr:
+                return None
+            translated = base_tr.translate(translate_to)
+            items = translated.fetch()
+            lang_code = getattr(translated, "language_code", translate_to)
+            return items, lang_code
+        except Exception:
+            return None
+
+    # No translation requested: try direct convenience API
+    try:
+        items = YouTubeTranscriptApi.get_transcript(video_id, languages=languages)
+        # language code is not returned here; best-effort
+        lang_code = languages[0] if languages else "unknown"
+        return items, lang_code
+    except Exception:
+        # Fallback: pick first available transcript
+        try:
+            t_list = YouTubeTranscriptApi.list_transcripts(video_id)
+            first = None
+            for tr in t_list:
+                first = tr
+                break
+            if not first:
+                return None
+            items = first.fetch()
+            lang_code = getattr(first, "language_code", "unknown")
+            return items, lang_code
+        except Exception:
+            return None
 
 
 def get_transcript_via_youtube_data_api(video_id: str) -> Optional[dict]:
