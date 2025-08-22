@@ -9,7 +9,5 @@ newspaper3k==0.2.8
 beautifulsoup4==4.13.4
 lxml==6.0.0
 lxml_html_clean==0.4.2
-playwright>=1.54.0
-greenlet>=3.2.4
-markdownify==0.13.1
+playwright==1.47.0
 

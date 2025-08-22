@@ -1,7 +1,6 @@
 from typing import Annotated
 
 from fastapi import APIRouter, File, HTTPException, UploadFile
-from fastapi.responses import FileResponse
 
 from .clients import http_client
 from .config import settings
@@ -15,11 +14,6 @@ router = APIRouter()
 @router.get("/health", response_model=HealthResponse)
 async def health() -> HealthResponse:
     return HealthResponse(status="ok")
-
-
-@router.get("/healthz")
-async def healthz():
-    return {"ok": True}
 
 
 @router.post("/proxy/ocr", response_model=OcrResponse)
@@ -51,10 +45,8 @@ async def proxy_caption(file: Annotated[UploadFile, File(...)]) -> CaptionRespon
 @router.post("/scrape", response_model=ScrapeResponse)
 async def scrape(payload: ScrapeRequest) -> ScrapeResponse:
     try:
-        result = await scrape_url(payload.url, headless=payload.headless)
+        result = scrape_url(payload.url, headless=payload.headless)
         return ScrapeResponse(**result)
-    except HTTPException as e:
-        raise e
     except Exception as exc:
         raise HTTPException(status_code=500, detail=f"Scrape error: {exc}")
 

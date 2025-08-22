@@ -22,6 +22,4 @@ class ScrapeResponse(BaseModel):
     title: str
     text: str
     images: list[str] = []
-    html: str | None = None
-    markdown: str | None = None
 
