@@ -2,6 +2,12 @@ from pydantic import BaseModel, Field
 from typing import List, Dict, Any, Optional
 
 
+class ImageInfo(BaseModel):
+    url: str
+    reference_text: Optional[str] = None
+    alt_text: Optional[str] = None
+
+
 class HealthResponse(BaseModel):
     status: str = Field(examples=["ok"])
 
@@ -21,7 +27,7 @@ class ScrapeRequest(BaseModel):
 class ScrapeResponse(BaseModel):
     title: str
     content: str
-    images: List[str] = []
+    images: List[ImageInfo] = []
     metadata: Dict[str, Any] = {}
     url: str
     status: str

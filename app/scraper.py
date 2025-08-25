@@ -32,15 +32,15 @@ class SwildeskScraper:
         self.session.headers.update({
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
             "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,image/apng,*/*;q=0.8",
-            "Accept-Language": "en-US,en;q=0.9",
-            "Accept-Encoding": "gzip, deflate, br",
-            "DNT": "1",
-            "Connection": "keep-alive",
-            "Upgrade-Insecure-Requests": "1",
-            "Sec-Fetch-Dest": "document",
-            "Sec-Fetch-Mode": "navigate",
-            "Sec-Fetch-Site": "none",
-            "Cache-Control": "max-age=0",
+        "Accept-Language": "en-US,en;q=0.9",
+        "Accept-Encoding": "gzip, deflate, br",
+        "DNT": "1",
+        "Connection": "keep-alive",
+        "Upgrade-Insecure-Requests": "1",
+        "Sec-Fetch-Dest": "document",
+        "Sec-Fetch-Mode": "navigate",
+        "Sec-Fetch-Site": "none",
+        "Cache-Control": "max-age=0",
             "Referer": "https://support.swildesk.com/"
         })
         
@@ -81,6 +81,26 @@ class SwildeskScraper:
         except Exception as e:
             logger.error(f"Error scraping {url}: {str(e)}")
             return self._create_error_response(str(e))
+    
+    def _similarity_check(self, text1: str, text2: str) -> float:
+        """Check similarity between two text strings"""
+        if not text1 or not text2:
+            return 0.0
+        
+        # Simple similarity check based on common words
+        words1 = set(text1.lower().split())
+        words2 = set(text2.lower().split())
+        
+        if not words1 or not words2:
+            return 0.0
+        
+        intersection = words1.intersection(words2)
+        union = words1.union(words2)
+        
+        if not union:
+            return 0.0
+        
+        return len(intersection) / len(union)
     
     def _extract_article_id(self, url: str) -> Optional[str]:
         """Extract article slug from URL - not used anymore but kept for reference"""
@@ -243,33 +263,112 @@ class SwildeskScraper:
         return has_react and not has_content
     
     def _extract_content_from_html(self, soup: BeautifulSoup, url: str) -> Dict[str, any]:
-        """Extract content from HTML, focusing only on the article body"""
+        """Extract content from HTML, focusing ONLY on the article body content"""
         try:
-            # Find the main article title (usually in h1 or specific class)
-            title = "No title found"
-            title_tag = soup.find('h1') or soup.find('title')
-            if title_tag:
-                title = title_tag.get_text(strip=True)
+            # Find the actual article title (not the page title)
+            article_title = "No title found"
             
-            # Find the main article content area - be more specific to avoid navigation
+            # Look for the main article heading (usually h1 or specific class)
+            title_selectors = [
+                'h1.kb-article-title',
+                'h1.article-title', 
+                'h1[data-testid="article-title"]',
+                'h1',
+                '.kb-article-title',
+                '.article-title'
+            ]
+            
+            for selector in title_selectors:
+                title_elem = soup.select_one(selector)
+                if title_elem:
+                    title_text = title_elem.get_text(strip=True)
+                    # Skip generic page titles like "Welcome to SwilDesk | Swil Support"
+                    if title_text and not any(skip in title_text.lower() for skip in [
+                        'welcome to', 'swildesk | swil support', 'swil support', 'knowledge base'
+                    ]):
+                        article_title = title_text
+                        logger.info(f"Found article title: {article_title}")
+                        break
+            
+            # If no title found in h1 tags, look for it in the content
+            if article_title == "No title found":
+                logger.info("No title found in h1 tags, looking in content...")
+                # Look for the first meaningful heading or text that looks like a title
+                content_elements = soup.find_all(['h1', 'h2', 'h3', 'p', 'div'])
+                for elem in content_elements:
+                    text = elem.get_text(strip=True)
+                    # Look for text that contains article-specific keywords and is NOT breadcrumb text
+                    if (any(keyword in text.lower() for keyword in [
+                        'importing purchase invoices', 'csv file', 'swilerp', 'import data'
+                    ]) and len(text) > 20 and len(text) < 200 and
+                    not any(breadcrumb in text.lower() for breadcrumb in [
+                        'knowledge base', 'swilerp - retailgraph', 'import/export data'
+                    ])):
+                        article_title = text
+                        logger.info(f"Found article title in content: {article_title}")
+                        break
+            
+            # If still no title, extract from the first meaningful content
+            if article_title == "No title found":
+                logger.info("Still no title found, extracting from first meaningful content...")
+                # Look for the first substantial text that looks like a title
+                for elem in soup.find_all(['h1', 'h2', 'h3', 'p', 'div']):
+                    text = elem.get_text(strip=True)
+                    if len(text) > 30 and len(text) < 150:
+                        # Check if it looks like an article title and NOT breadcrumb
+                        if (any(keyword in text.lower() for keyword in ['import', 'csv', 'swilerp', 'purchase']) and
+                            not any(breadcrumb in text.lower() for breadcrumb in [
+                                'knowledge base', 'swilerp - retailgraph', 'import/export data'
+                            ])):
+                            article_title = text
+                            logger.info(f"Extracted title from content: {article_title}")
+                            break
+            
+            # If still no title, try to find it in the main content area
+            if article_title == "No title found":
+                logger.info("Still no title found, trying to extract from main content...")
+                # Look for the first line that contains the article title
+                main_content_text = soup.get_text(separator='\n', strip=True)
+                content_lines = main_content_text.split('\n')
+                
+                for line in content_lines:
+                    line = line.strip()
+                    # Look for a line that contains the article title keywords and is NOT breadcrumb
+                    if (len(line) > 30 and len(line) < 200 and 
+                        any(keyword in line.lower() for keyword in ['importing purchase invoices', 'csv file', 'swilerp']) and
+                        not any(breadcrumb in line.lower() for breadcrumb in [
+                            'knowledge base', 'swilerp - retailgraph', 'import/export data'
+                        ])):
+                        article_title = line
+                        logger.info(f"Extracted title from main content: {article_title}")
+                        break
+            
+            # Find ONLY the article body content - be very specific
             article_content = None
             
-            # Try to find the specific article content area first
-            specific_selectors = [
+            # First, try to find the specific article content container
+            content_selectors = [
                 'div.kb-article-content',           # Zoho help center specific
                 'div.article-content',               # Generic article content
                 'div[data-testid="article-content"]', # Test ID based
-                'div.content',                       # Generic content
                 'article',                           # HTML5 article tag
+                'main',                              # HTML5 main tag
                 'div.entry-content',                 # WordPress-like
                 'div.post-content'                   # Blog-like
             ]
             
-            for selector in specific_selectors:
-                article_content = soup.select_one(selector)
-                if article_content:
-                    logger.info(f"Found article content using specific selector: {selector}")
-                    break
+            for selector in content_selectors:
+                content_elem = soup.select_one(selector)
+                if content_elem:
+                    # Verify this contains actual article content, not navigation
+                    text = content_elem.get_text(strip=True)
+                    if len(text) > 2000 and any(keyword in text.lower() for keyword in [
+                        'step 1:', 'step 2:', 'reference image:', 'what is a csv file?',
+                        'import', 'csv', 'swilerp', 'purchase invoice'
+                    ]):
+                        article_content = content_elem
+                        logger.info(f"Found article content using selector: {selector}")
+                        break
             
             # If no specific content area found, try to find the article body more intelligently
             if not article_content:
@@ -280,6 +379,7 @@ class SwildeskScraper:
                 
                 # Find all divs and check their content
                 all_divs = soup.find_all('div')
+                
                 for div in all_divs:
                     # Skip obvious navigation/header/footer elements
                     div_classes = ' '.join(div.get('class', [])).lower()
@@ -289,7 +389,8 @@ class SwildeskScraper:
                     if any(skip in div_classes or skip in div_id for skip in [
                         'header', 'footer', 'nav', 'navigation', 'breadcrumb', 
                         'sidebar', 'menu', 'search', 'logo', 'brand', 'skip',
-                        'portal', 'swil', 'swildesk', 'top', 'bottom'
+                        'portal', 'swil', 'swildesk', 'top', 'bottom', 'global',
+                        'user', 'auth', 'sign', 'login', 'register', 'profile'
                     ]):
                         continue
                     
@@ -388,12 +489,11 @@ class SwildeskScraper:
             # Join all content parts
             content = '\n'.join(content_parts).strip()
             
-            # Clean up multiple newlines and remove navigation remnants
-            content = re.sub(r'\n\s*\n\s*\n', '\n\n', content)
-            
-            # Final cleanup - remove any remaining navigation text
+            # Final cleanup - remove any remaining navigation text and duplicates
             lines = content.split('\n')
             cleaned_lines = []
+            seen_lines = set()  # To remove duplicates
+            
             for line in lines:
                 line = line.strip()
                 if line and not any(nav_text in line.lower() for nav_text in [
@@ -406,13 +506,46 @@ class SwildeskScraper:
                     'swil network', 'import/export data', 'view all', 'tags',
                     'still can\'t find an answer?', 'send us a support request',
                     'softworld (india) pvt. ltd.', 'iso 9001:2015', 'jaipur',
-                    'sunder market', 'sms hospital', 's.r.s. road'
+                    'sunder market', 'sms hospital', 's.r.s. road',
+                    'on this page', 'follow', 'subscribe to receive notifications',
+                    'helpful?', 'import master excel file', 'export/import all vendors',
+                    'export/import all customers', 'export/import vouchers',
+                    'export/import cheque format', 'export tally data', 'how to export/import'
                 ]):
                     # Also filter out very short lines that are likely navigation
                     if len(line) > 3 and not line in ['?', 'Unknown', '-', '+', '|']:
-                        cleaned_lines.append(line)
+                        # Special handling for reference image lines - preserve them
+                        if 'reference image:' in line.lower():
+                            if line not in seen_lines:  # Avoid duplicates
+                                cleaned_lines.append(line)
+                                seen_lines.add(line)
+                        else:
+                            # For non-reference lines, check for duplicates
+                            if line not in seen_lines:
+                                cleaned_lines.append(line)
+                                seen_lines.add(line)
             
             content = '\n'.join(cleaned_lines).strip()
+            
+            # Remove any remaining duplicate consecutive lines
+            final_lines = []
+            prev_line = ""
+            for line in content.split('\n'):
+                line = line.strip()
+                if line and line != prev_line:
+                    # Also check for similar lines (with slight variations)
+                    is_duplicate = False
+                    for existing_line in final_lines:
+                        # Check if lines are very similar (90% similarity)
+                        if self._similarity_check(line, existing_line) > 0.9:
+                            is_duplicate = True
+                            break
+                    
+                    if not is_duplicate:
+                        final_lines.append(line)
+                        prev_line = line
+            
+            content = '\n'.join(final_lines).strip()
             
             # If we still don't have good content, try a simpler approach
             if len(content) < 500:
@@ -440,16 +573,21 @@ class SwildeskScraper:
                     ]):
                         # Also filter out very short lines that are likely navigation
                         if len(line) > 3 and not line in ['?', 'Unknown', '-', '+', '|']:
-                            cleaned_lines.append(line)
+                            # Special handling for reference image lines - preserve them
+                            if 'reference image:' in line.lower():
+                                cleaned_lines.append(line)
+                            else:
+                                cleaned_lines.append(line)
                 
                 content = '\n'.join(cleaned_lines).strip()
                 logger.info(f"Simpler approach produced {len(content)} characters of content")
             
-            # Extract images with their context
+            # Extract images with their context - search in the full page, not just content area
             images = []
-            image_elements = content_soup.find_all('img')
             
-            for img in image_elements:
+            # First, try to find images in the content area
+            content_images = content_soup.find_all('img')
+            for img in content_images:
                 img_src = img.get('src') or img.get('data-src')
                 if img_src:
                     # Make URL absolute
@@ -483,6 +621,195 @@ class SwildeskScraper:
                         'alt_text': img.get('alt', '')
                     })
             
+            # If no images found in content area, search the entire page for images
+            if not images:
+                logger.info("No images found in content area, searching entire page...")
+                
+                # Search in the original soup (full page) for images
+                all_images = soup.find_all('img')
+                logger.info(f"Found {len(all_images)} images on the page")
+                
+                # First, let's find all the reference text mentioned in our content
+                # Get the raw content before cleaning to preserve reference text
+                raw_content = article_content.get_text(separator='\n', strip=True)
+                reference_texts = []
+                content_lines = raw_content.split('\n')
+                for line in content_lines:
+                    if 'reference image:' in line.lower():
+                        # Extract the reference text after "Reference Image:"
+                        ref_text = line.split('Reference Image:')[-1].strip()
+                        if ref_text:
+                            reference_texts.append(ref_text.lower())
+                
+                logger.info(f"Found reference texts: {reference_texts}")
+                
+                # Now try to match images with reference texts
+                for img in all_images:
+                    img_src = img.get('src') or img.get('data-src')
+                    if img_src:
+                        # Make URL absolute
+                        if img_src.startswith('//'):
+                            img_src = 'https:' + img_src
+                        elif img_src.startswith('/'):
+                            img_src = urljoin(url, img_src)
+                        elif not img_src.startswith('http'):
+                            img_src = urljoin(url, img_src)
+                        
+                        # Look for reference text near the image
+                        reference_text = ""
+                        
+                        # Check if image has alt text
+                        if img.get('alt'):
+                            reference_text = img['alt']
+                        else:
+                            # Look for reference text in nearby elements
+                            parent = img.parent
+                            if parent:
+                                # Look for text that mentions "Reference Image" or similar
+                                for sibling in parent.find_all(['p', 'span', 'div']):
+                                    sibling_text = sibling.get_text(strip=True)
+                                    if any(ref_word in sibling_text.lower() for ref_word in ['reference', 'image', 'screenshot', 'figure']):
+                                        reference_text = sibling_text
+                                        break
+                        
+                        # If we found reference text, try to match it with our content references
+                        if reference_text:
+                            # Check if this reference text appears in our cleaned content
+                            if reference_text.lower() in content.lower():
+                                images.append({
+                                    'url': img_src,
+                                    'reference_text': reference_text,
+                                    'alt_text': img.get('alt', '')
+                                })
+                                logger.info(f"Found referenced image: {reference_text} -> {img_src}")
+                        
+                        # If no reference text found, try to match by proximity
+                        if not reference_text:
+                            # Look for any text near the image that might be a reference
+                            parent = img.parent
+                            if parent:
+                                # Search in parent and siblings for reference-like text
+                                nearby_text = parent.get_text(strip=True)
+                                
+                                # Check if any of our reference texts appear nearby
+                                for ref_text in reference_texts:
+                                    if ref_text in nearby_text.lower():
+                                        # Find the actual reference text in the nearby content
+                                        for sibling in parent.find_all(['p', 'span', 'div']):
+                                            sibling_text = sibling.get_text(strip=True)
+                                            if ref_text in sibling_text.lower():
+                                                reference_text = sibling_text
+                                                break
+                                        
+                                        if reference_text:
+                                            images.append({
+                                                'url': img_src,
+                                                'reference_text': reference_text,
+                                                'alt_text': img.get('alt', '')
+                                            })
+                                            logger.info(f"Found image by proximity: {reference_text} -> {img_src}")
+                                            break
+                
+                # If we still don't have enough images, try to find images by looking at the DOM structure
+                if len(images) < len(reference_texts):
+                    logger.info(f"Only found {len(images)} images for {len(reference_texts)} references, trying DOM structure analysis...")
+                    
+                    # Look for images that might be in specific containers
+                    for ref_text in reference_texts:
+                        # Skip if we already have an image for this reference
+                        if any(ref_text in img['reference_text'].lower() for img in images):
+                            continue
+                        
+                        # Look for images in the same section as this reference text
+                        for element in soup.find_all(['div', 'section', 'article']):
+                            element_text = element.get_text(strip=True).lower()
+                            if ref_text in element_text:
+                                # Found a container with this reference text, look for images in it
+                                container_images = element.find_all('img')
+                                for img in container_images:
+                                    img_src = img.get('src') or img.get('data-src')
+                                    if img_src:
+                                        # Make URL absolute
+                                        if img_src.startswith('//'):
+                                            img_src = 'https:' + img_src
+                                        elif img_src.startswith('/'):
+                                            img_src = urljoin(url, img_src)
+                                        elif not img_src.startswith('http'):
+                                            img_src = urljoin(url, img_src)
+                                        
+                                        # Find the actual reference text in this container
+                                        actual_ref_text = ""
+                                        for text_elem in element.find_all(['p', 'span', 'div']):
+                                            text_content = text_elem.get_text(strip=True)
+                                            if ref_text in text_content.lower():
+                                                actual_ref_text = text_content
+                                                break
+                                        
+                                        if actual_ref_text:
+                                            images.append({
+                                                'url': img_src,
+                                                'reference_text': actual_ref_text,
+                                                'alt_text': img.get('alt', '')
+                                            })
+                                            logger.info(f"Found image by DOM structure: {actual_ref_text} -> {img_src}")
+                                            break
+                
+                logger.info(f"Total images found: {len(images)}")
+            
+            # If we still don't have images with reference text, try a different approach
+            # Look for images that are mentioned in the content with "Reference Image:" text
+            if not any(img.get('reference_text') for img in images):
+                logger.info("No images with reference text found, trying content-based matching...")
+                
+                # Parse the content to find "Reference Image:" mentions
+                content_lines = content.split('\n')
+                reference_sections = []
+                
+                for i, line in enumerate(content_lines):
+                    if 'reference image:' in line.lower():
+                        # Get the reference text
+                        ref_text = line.split('Reference Image:')[-1].strip()
+                        if ref_text:
+                            # Look for the next few lines that might contain more context
+                            context_lines = []
+                            for j in range(i, min(i + 3, len(content_lines))):
+                                context_lines.append(content_lines[j])
+                            
+                            reference_sections.append({
+                                'reference': ref_text,
+                                'context': ' '.join(context_lines)
+                            })
+                
+                logger.info(f"Found {len(reference_sections)} reference sections in content")
+                
+                # Now try to match these with images from the page
+                all_page_images = soup.find_all('img')
+                for ref_section in reference_sections:
+                    ref_text = ref_section['reference'].lower()
+                    
+                    # Look for images that might match this reference
+                    for img in all_page_images:
+                        img_src = img.get('src') or img.get('data-src')
+                        if img_src:
+                            # Make URL absolute
+                            if img_src.startswith('//'):
+                                img_src = 'https:' + img_src
+                            elif img_src.startswith('/'):
+                                img_src = urljoin(url, img_src)
+                            elif not img_src.startswith('http'):
+                                img_src = urljoin(url, img_src)
+                            
+                            # Check if this image is already in our list
+                            if not any(img_src == existing_img['url'] for existing_img in images):
+                                # Add this image with the reference text
+                                images.append({
+                                    'url': img_src,
+                                    'reference_text': f"Reference Image: {ref_section['reference']}",
+                                    'alt_text': img.get('alt', '')
+                                })
+                                logger.info(f"Added image with reference: {ref_section['reference']} -> {img_src}")
+                                break
+            
             # Extract metadata
             metadata = {}
             
@@ -507,7 +834,7 @@ class SwildeskScraper:
             metadata['image_count'] = len(images)
             
             return {
-                "title": title,
+                "title": article_title,
                 "content": content,
                 "images": images,
                 "metadata": metadata,
