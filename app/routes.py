@@ -45,7 +45,7 @@ async def proxy_caption(file: Annotated[UploadFile, File(...)]) -> CaptionRespon
 @router.post("/scrape", response_model=ScrapeResponse)
 async def scrape(payload: ScrapeRequest) -> ScrapeResponse:
     try:
-        result = scrape_url(payload.url, headless=payload.headless)
+        result = await scrape_url(payload.url, headless=payload.headless)
         return ScrapeResponse(**result)
     except Exception as exc:
         raise HTTPException(status_code=500, detail=f"Scrape error: {exc}")

@@ -4,23 +4,23 @@ from urllib.parse import urljoin
 
 from bs4 import BeautifulSoup
 from newspaper import Article
-from playwright.sync_api import sync_playwright
+from playwright.async_api import async_playwright
 
 
-def fetch_html_with_js(url: str, wait_until: str = "networkidle", timeout_ms: int = 30000, headless: bool = True) -> tuple[str, str]:
-    with sync_playwright() as p:
-        browser = p.chromium.launch(headless=headless)
-        context = browser.new_context(
+async def fetch_html_with_js(url: str, wait_until: str = "networkidle", timeout_ms: int = 30000, headless: bool = True) -> tuple[str, str]:
+    async with async_playwright() as p:
+        browser = await p.chromium.launch(headless=headless)
+        context = await browser.new_context(
             user_agent=(
                 "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
                 "(KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36"
             )
         )
-        page = context.new_page()
-        page.goto(url, wait_until=wait_until, timeout=timeout_ms)
-        html = page.content()
+        page = await context.new_page()
+        await page.goto(url, wait_until=wait_until, timeout=timeout_ms)
+        html = await page.content()
         final_url = page.url
-        browser.close()
+        await browser.close()
         return html, final_url
 
 
@@ -84,9 +84,9 @@ def clean_and_extract_main_content(html: str, base_url: str) -> tuple[str, str, 
     return article.title or "", content_text, images if images else []
 
 
-def scrape_url(url: str, headless: bool = True) -> dict:
+async def scrape_url(url: str, headless: bool = True) -> dict:
     base_url = url.split("#", 1)[0]
-    html, final_url = fetch_html_with_js(base_url, headless=headless)
+    html, final_url = await fetch_html_with_js(base_url, headless=headless)
     title, text, images = clean_and_extract_main_content(html, final_url)
     return {"title": title, "text": text, "images": images}
 
