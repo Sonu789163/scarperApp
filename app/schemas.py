@@ -1,4 +1,5 @@
 from pydantic import BaseModel, Field
+from typing import List, Dict, Any, Optional
 
 
 class HealthResponse(BaseModel):
@@ -15,11 +16,14 @@ class CaptionResponse(BaseModel):
 
 class ScrapeRequest(BaseModel):
     url: str = Field(description="Page URL to scrape")
-    headless: bool = Field(default=True, description="Run browser headless")
 
 
 class ScrapeResponse(BaseModel):
     title: str
-    text: str
-    images: list[str] = []
+    content: str
+    images: List[str] = []
+    metadata: Dict[str, Any] = {}
+    url: str
+    status: str
+    error: Optional[str] = None
 

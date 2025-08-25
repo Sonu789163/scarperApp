@@ -37,16 +37,24 @@ async def proxy_caption(file: Annotated[UploadFile, File(...)]) -> CaptionRespon
             resp = await client.post(settings.caption_api_url, files=files)
             resp.raise_for_status()
             data = resp.json()
-            return CaptionResponse(caption=data.get("caption", ""))
+            return OcrResponse(caption=data.get("caption", ""))
     except Exception as exc:
         raise HTTPException(status_code=502, detail=f"Caption upstream error: {exc}")
 
 
 @router.post("/scrape", response_model=ScrapeResponse)
 async def scrape(payload: ScrapeRequest) -> ScrapeResponse:
+    print(f"=== SCRAPE ROUTE CALLED ===")
+    print(f"URL: {payload.url}")
+    
     try:
-        result = await scrape_url(payload.url, headless=payload.headless)
+        print("Calling scrape_url function...")
+        result = await scrape_url(payload.url)
+        print(f"Scrape result: {result}")
         return ScrapeResponse(**result)
     except Exception as exc:
-        raise HTTPException(status_code=500, detail=f"Scrape error: {exc}")
+        import traceback
+        error_details = f"Scrape error: {str(exc)}\nTraceback: {traceback.format_exc()}"
+        print(f"ERROR in scrape route: {error_details}")
+        raise HTTPException(status_code=500, detail=error_details)
 

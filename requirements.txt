@@ -5,9 +5,9 @@ python-multipart==0.0.9
 pydantic==2.8.2
 pydantic-settings==2.4.0
 python-dotenv==1.0.1
-newspaper3k==0.2.8
 beautifulsoup4==4.13.4
+requests==2.31.0
 lxml==6.0.0
-lxml_html_clean==0.4.2
-playwright==1.47.0
+selenium==4.15.2
+webdriver-manager==4.0.1
 
