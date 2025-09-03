@@ -118,3 +118,4 @@ def debug_scrape(url):
 if __name__ == "__main__":
     test_url = "https://support.swildesk.com/portal/en/kb/articles/import-data-in-swilerp-retailgraph-through-csv"
     debug_scrape(test_url)
+

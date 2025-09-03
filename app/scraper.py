@@ -469,22 +469,84 @@ class SwildeskScraper:
                 ]):
                     element.decompose()
             
-            # Extract text content with better formatting
+            # Extract text content with better formatting and handle reference images
             content_parts = []
             
-            # Process each text element to preserve structure
-            for element in content_soup.find_all(['p', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'li', 'div']):
-                text = element.get_text(strip=True)
-                if text and len(text) > 10:  # Only meaningful text
-                    # Add proper spacing based on element type
-                    if element.name in ['h1', 'h2', 'h3', 'h4', 'h5', 'h6']:
-                        content_parts.append(f"\n\n{text}\n")
-                    elif element.name == 'li':
-                        content_parts.append(f"• {text}")
-                    elif element.name == 'p':
-                        content_parts.append(f"{text}\n")
-                    else:
-                        content_parts.append(text)
+            # Process each element to preserve structure and handle reference images
+            for element in content_soup.find_all(['p', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'li', 'div', 'img']):
+                if element.name == 'img':
+                    # Handle images - check if this is a reference image
+                    img_src = element.get('src') or element.get('data-src')
+                    if img_src:
+                        # Make URL absolute
+                        if img_src.startswith('//'):
+                            img_src = 'https:' + img_src
+                        elif img_src.startswith('/'):
+                            img_src = urljoin(url, img_src)
+                        elif not img_src.startswith('http'):
+                            img_src = urljoin(url, img_src)
+                        
+                        # Check if this is a reference image by looking at surrounding text
+                        is_reference_image = False
+                        parent_text = ""
+                        if element.parent:
+                            parent_text = element.parent.get_text(strip=True).lower()
+                        
+                        # Check if parent or nearby text mentions "reference image"
+                        if "reference image" in parent_text or "ref image" in parent_text:
+                            is_reference_image = True
+                        
+                        # Also check if the image is in a context that suggests it's a reference
+                        if element.get('alt') and any(keyword in element.get('alt', '').lower() for keyword in ['reference', 'screenshot', 'figure', 'example']):
+                            is_reference_image = True
+                        
+                        if is_reference_image:
+                            content_parts.append(f"Reference Image: @{img_src}")
+                        else:
+                            # Regular image - add as reference image anyway for now
+                            content_parts.append(f"Reference Image: @{img_src}")
+                else:
+                    # Handle text content
+                    text = element.get_text(strip=True)
+                    if text and len(text) > 10:  # Only meaningful text
+                        # Check if this element contains a reference image
+                        img_in_element = element.find('img')
+                        if img_in_element:
+                            # This text element contains an image
+                            # First add the text (without the image text)
+                            text_without_img = text.replace(img_in_element.get_text(strip=True), "").strip()
+                            if text_without_img:
+                                if element.name in ['h1', 'h2', 'h3', 'h4', 'h5', 'h6']:
+                                    content_parts.append(f"\n\n{text_without_img}\n")
+                                elif element.name == 'li':
+                                    content_parts.append(f"• {text_without_img}")
+                                elif element.name == 'p':
+                                    content_parts.append(f"{text_without_img}\n")
+                                else:
+                                    content_parts.append(text_without_img)
+                            
+                            # Then add the reference image
+                            img_src = img_in_element.get('src') or img_in_element.get('data-src')
+                            if img_src:
+                                # Make URL absolute
+                                if img_src.startswith('//'):
+                                    img_src = 'https:' + img_src
+                                elif img_src.startswith('/'):
+                                    img_src = urljoin(url, img_src)
+                                elif not img_src.startswith('http'):
+                                    img_src = urljoin(url, img_src)
+                                
+                                content_parts.append(f"Reference Image: @{img_src}")
+                        else:
+                            # Regular text content
+                            if element.name in ['h1', 'h2', 'h3', 'h4', 'h5', 'h6']:
+                                content_parts.append(f"\n\n{text}\n")
+                            elif element.name == 'li':
+                                content_parts.append(f"• {text}")
+                            elif element.name == 'p':
+                                content_parts.append(f"{text}\n")
+                            else:
+                                content_parts.append(text)
             
             # Join all content parts
             content = '\n'.join(content_parts).strip()
@@ -582,44 +644,21 @@ class SwildeskScraper:
                 content = '\n'.join(cleaned_lines).strip()
                 logger.info(f"Simpler approach produced {len(content)} characters of content")
             
-            # Extract images with their context - search in the full page, not just content area
+            # Extract images with their context - but now they're already included in content
             images = []
             
-            # First, try to find images in the content area
-            content_images = content_soup.find_all('img')
-            for img in content_images:
-                img_src = img.get('src') or img.get('data-src')
-                if img_src:
-                    # Make URL absolute
-                    if img_src.startswith('//'):
-                        img_src = 'https:' + img_src
-                    elif img_src.startswith('/'):
-                        img_src = urljoin(url, img_src)
-                    elif not img_src.startswith('http'):
-                        img_src = urljoin(url, img_src)
-                    
-                    # Look for reference text near the image
-                    reference_text = ""
-                    
-                    # Check if image has alt text
-                    if img.get('alt'):
-                        reference_text = img['alt']
-                    else:
-                        # Look for reference text in nearby elements
-                        parent = img.parent
-                        if parent:
-                            # Look for text that mentions "Reference Image" or similar
-                            for sibling in parent.find_all(['p', 'span', 'div']):
-                                sibling_text = sibling.get_text(strip=True)
-                                if any(ref_word in sibling_text.lower() for ref_word in ['reference', 'image', 'screenshot', 'figure']):
-                                    reference_text = sibling_text
-                                    break
-                    
-                    images.append({
-                        'url': img_src,
-                        'reference_text': reference_text,
-                        'alt_text': img.get('alt', '')
-                    })
+            # Extract images from the content we just processed
+            # Look for "Reference Image: @" patterns in the content
+            import re
+            image_pattern = r'Reference Image: @([^\s\n]+)'
+            found_images = re.findall(image_pattern, content)
+            
+            for img_url in found_images:
+                images.append({
+                    'url': img_url,
+                    'reference_text': 'Reference Image',
+                    'alt_text': 'Reference Image'
+                })
             
             # If no images found in content area, search the entire page for images
             if not images:
